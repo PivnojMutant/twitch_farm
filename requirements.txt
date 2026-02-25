@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+sqlalchemy[asyncio]
+aiosqlite
+twitchio
+opencv-python
+streamlink
+httpx
+python-dotenv
+passlib[bcrypt]
