@@ -1,24 +1,704 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-    <title>Twitch Ghost Farm</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twitch Ghost Farm - Управление</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #9146ff;
+            --dark-bg: #0e0e10;
+            --card-bg: #18181b;
+            --border-color: #2d2d31;
+        }
+        
+        body {
+            background-color: var(--dark-bg);
+            color: #efeff1;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        .navbar {
+            background-color: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 2rem;
+        }
+        
+        .navbar-brand {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-color) !important;
+        }
+        
+        .container-main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
+        }
+        
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 2rem;
+        }
+        
+        .card-header {
+            background-color: rgba(145, 70, 255, 0.1);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.25rem;
+        }
+        
+        .card-header h5 {
+            margin: 0;
+            color: var(--primary-color);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .card-body {
+            padding: 1.5rem;
+        }
+        
+        .form-control, .form-select {
+            background-color: #2d2d31;
+            border: 1px solid var(--border-color);
+            color: #efeff1;
+            padding: 0.75rem;
+        }
+        
+        .form-control:focus, .form-select:focus {
+            background-color: #2d2d31;
+            border-color: var(--primary-color);
+            color: #efeff1;
+            box-shadow: 0 0 0 0.2rem rgba(145, 70, 255, 0.25);
+        }
+        
+        .form-check-input {
+            background-color: #2d2d31;
+            border: 1px solid var(--border-color);
+        }
+        
+        .form-check-input:checked {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .btn {
+            border-radius: 4px;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary-color);
+            border: none;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background-color: #7d3fc0;
+            transform: translateY(-2px);
+        }
+        
+        .btn-success {
+            background-color: #31a24c;
+            border: none;
+        }
+        
+        .btn-success:hover {
+            background-color: #239a3b;
+        }
+        
+        .btn-danger {
+            background-color: #eb425f;
+            border: none;
+        }
+        
+        .btn-danger:hover {
+            background-color: #d63853;
+        }
+        
+        .btn-outline-success {
+            color: #31a24c;
+            border-color: #31a24c;
+        }
+        
+        .btn-outline-success:hover {
+            background-color: #31a24c;
+            color: white;
+        }
+        
+        .btn-sm {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+        
+        .table {
+            color: #efeff1;
+            margin: 0;
+        }
+        
+        .table thead th {
+            border-bottom: 2px solid var(--border-color);
+            color: var(--primary-color);
+            font-weight: 600;
+            background-color: rgba(145, 70, 255, 0.05);
+        }
+        
+        .table tbody tr {
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .table tbody tr:hover {
+            background-color: rgba(145, 70, 255, 0.05);
+        }
+        
+        .badge {
+            padding: 0.5rem 0.75rem;
+            font-weight: 600;
+        }
+        
+        .badge.bg-success {
+            background-color: #31a24c !important;
+        }
+        
+        .log-container {
+            background-color: #0e0e10;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            max-height: 300px;
+            overflow-y: auto;
+            line-height: 1.5;
+        }
+        
+        .log-entry {
+            margin: 0.25rem 0;
+            word-break: break-word;
+        }
+        
+        .log-info {
+            color: #31a24c;
+        }
+        
+        .log-warning {
+            color: #faa61a;
+        }
+        
+        .log-error {
+            color: #eb425f;
+        }
+        
+        .log-debug {
+            color: #7d7d82;
+        }
+        
+        .time-stamp {
+            font-size: 0.75rem;
+            color: #7d7d82;
+            margin-left: auto;
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .section-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        
+        .control-group label {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #b0bac0;
+        }
+        
+        .tabs-container {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .tab-btn {
+            padding: 0.75rem 1.5rem;
+            background: none;
+            border: none;
+            color: #7d7d82;
+            cursor: pointer;
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .tab-btn.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+        }
+        
+        .tab-btn:hover {
+            color: #efeff1;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .stat-box {
+            background-color: rgba(145, 70, 255, 0.1);
+            border: 1px solid var(--border-color);
+            padding: 1rem;
+            border-radius: 4px;
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+        
+        .stat-label {
+            font-size: 0.875rem;
+            color: #7d7d82;
+        }
+        
+        .alert {
+            border-radius: 4px;
+            border: 1px solid;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .row-flex {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        @media (max-width: 768px) {
+            .header-actions {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .section-controls {
+                grid-template-columns: 1fr;
+            }
+            
+            .tabs-container {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
 </head>
-<body class="bg-dark text-light p-5">
-    <div class="container">
-        <h1 class="mb-4">Twitch Ghost Farm</h1>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="container-fluid">
+            <span class="navbar-brand">
+                <i class="bi bi-ghost"></i> Twitch Ghost Farm
+            </span>
+        </div>
+    </nav>
 
-        <form method="post" action="/start">
-            <div class="mb-3">
-                <label>Ссылка на стрим</label>
-                <input name="stream_url" class="form-control" required>
+    <div class="container-main">
+        <!-- Управление стримом -->
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-play-circle"></i> Управление стримом</h5>
             </div>
-            <button class="btn btn-success">Start</button>
-        </form>
+            <div class="card-body">
+                <form method="post" action="/start" id="startForm">
+                    <div class="section-controls">
+                        <div class="control-group">
+                            <label for="stream_url">Ссылка на стрим</label>
+                            <input name="stream_url" id="stream_url" class="form-control" placeholder="https://twitch.tv/..." required>
+                        </div>
+                        
+                        <div class="control-group">
+                            <label for="channel">Канал (без #)</label>
+                            <input name="channel" id="channel" class="form-control" placeholder="target_channel" required>
+                        </div>
+                        
+                        <div class="control-group">
+                            <label for="provider">AI провайдер</label>
+                            <select name="provider" id="provider" class="form-select">
+                                <option value="groq">🚀 Groq</option>
+                                <option value="openrouter">🔗 OpenRouter</option>
+                            </select>
+                        </div>
+                    </div>
 
-        <form method="post" action="/stop" class="mt-3">
-            <button class="btn btn-danger">Stop</button>
-        </form>
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="send_chat" id="send_chat" checked>
+                                <label class="form-check-label" for="send_chat">Отправлять в чат</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="capture_audio" id="capture_audio" checked>
+                                <label class="form-check-label" for="capture_audio">Ловить аудио</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="capture_video" id="capture_video" checked>
+                                <label class="form-check-label" for="capture_video">Ловить видео</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row-flex">
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-play-fill"></i> Запустить стрим
+                        </button>
+                    </div>
+                </form>
+
+                <form method="post" action="/stop" class="mt-3" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-stop-fill"></i> Остановить
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Две колонки для логов и сообщений -->
+        <div class="row mb-4">
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="bi bi-chat-dots"></i> История сообщений</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="msg-container" class="log-container">
+                            <div style="color: #7d7d82;">Ожидание сообщений...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="bi bi-terminal"></i> Логи системы</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="log-container" class="log-container">
+                            <div style="color: #7d7d82;">Ожидание логов...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Табы для управления -->
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-gear"></i> Управление ключами и аккаунтами</h5>
+            </div>
+            
+            <div class="card-body">
+                <div class="tabs-container">
+                    <button class="tab-btn active" onclick="switchTab('api-keys')">API Ключи</button>
+                    <button class="tab-btn" onclick="switchTab('accounts')">Аккаунты</button>
+                    <button class="tab-btn" onclick="switchTab('send-message')">Отправить сообщение</button>
+                </div>
+
+                <!-- Tab: API Keys -->
+                <div id="api-keys" class="tab-content active">
+                    <h6 class="mb-3"><i class="bi bi-key"></i> Добавить API ключ</h6>
+                    <form method="post" action="/add-api-key">
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label>Провайдер</label>
+                                <select name="provider" class="form-select" required>
+                                    <option value="groq">Groq</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label>API Ключ</label>
+                                <input name="key" type="password" class="form-control" placeholder="gsk_... или sk-..." required>
+                            </div>
+                            <div class="col-md-4">
+                                <label>Модель (опционально)</label>
+                                <input name="model" type="text" class="form-control" placeholder="llama-3.2-90b-vision-preview">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Добавить ключ
+                        </button>
+                    </form>
+
+                    {% if api_keys %}
+                    <hr class="my-4">
+                    <h6 class="mb-3">Активные ключи ({{ api_keys|length }})</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Провайдер</th>
+                                    <th>Модель</th>
+                                    <th>Использовано</th>
+                                    <th>Действие</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for key in api_keys %}
+                                <tr>
+                                    <td>#{{ key.id }}</td>
+                                    <td><span class="badge" style="background-color: var(--primary-color);">{{ key.provider }}</span></td>
+                                    <td><small>{{ key.model or '-' }}</small></td>
+                                    <td><span class="badge bg-info">{{ key.usage_count }}</span></td>
+                                    <td>
+                                        <a href="/delete-api-key/{{ key.id }}" class="btn btn-sm btn-danger" onclick="return confirm('Удалить ключ?')">
+                                            <i class="bi bi-trash"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Tab: Accounts -->
+                <div id="accounts" class="tab-content">
+                    <h6 class="mb-3"><i class="bi bi-person-plus"></i> Добавить аккаунт Twitch</h6>
+                    <form method="post" action="/add-account">
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <label>Ник</label>
+                                <input name="username" class="form-control" placeholder="example" required>
+                            </div>
+                            <div class="col-md-3">
+                                <label>OAuth токен</label>
+                                <input name="oauth_token" type="password" class="form-control" placeholder="oauth:..." required>
+                            </div>
+                            <div class="col-md-3">
+                                <label>Личность</label>
+                                <select name="personality" class="form-select" required>
+                                    <option value="viewer">👁️ Зритель</option>
+                                    <option value="gamer">🎮 Геймер</option>
+                                    <option value="hater">😤 Хейтер</option>
+                                    <option value="polite">😊 Вежливый</option>
+                                    <option value="troll">🤡 Тролль</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label>Прокси (опц.)</label>
+                                <input name="proxy" class="form-control" placeholder="http://...">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Добавить аккаунт
+                        </button>
+                    </form>
+
+                    {% if accounts %}
+                    <hr class="my-4">
+                    <h6 class="mb-3">Аккаунты Twitch ({{ accounts|length }})</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Ник</th>
+                                    <th>Личность</th>
+                                    <th>Статус</th>
+                                    <th>Действие</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for acc in accounts %}
+                                <tr>
+                                    <td><strong>{{ acc.username }}</strong></td>
+                                    <td>
+                                        {% if acc.personality == 'viewer' %}
+                                            <span class="badge" style="background-color: #7d3fc0;">👁️ Зритель</span>
+                                        {% elif acc.personality == 'gamer' %}
+                                            <span class="badge" style="background-color: #31a24c;">🎮 Геймер</span>
+                                        {% elif acc.personality == 'hater' %}
+                                            <span class="badge" style="background-color: #eb425f;">😤 Хейтер</span>
+                                        {% elif acc.personality == 'polite' %}
+                                            <span class="badge bg-info">😊 Вежливый</span>
+                                        {% else %}
+                                            <span class="badge" style="background-color: #faa61a;">🤡 Тролль</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if acc.is_active %}
+                                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Активен</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary"><i class="bi bi-x-circle"></i> Неактивен</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="/delete-account/{{ acc.id }}" class="btn btn-sm btn-danger" onclick="return confirm('Удалить аккаунт?')">
+                                            <i class="bi bi-trash"></i> Удалить
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Tab: Send Message -->
+                <div id="send-message" class="tab-content">
+                    <h6 class="mb-3"><i class="bi bi-send"></i> Отправить сообщение</h6>
+                    {% if accounts %}
+                    <form method="post" action="/send-message">
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <label>Аккаунт</label>
+                                <select name="account_id" class="form-select" required>
+                                    <option value="">Выберите аккаунт...</option>
+                                    {% for acc in accounts %}
+                                    <option value="{{ acc.id }}">{{ acc.username }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label>Канал</label>
+                                <input name="channel" class="form-control" placeholder="канал" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label>Сообщение</label>
+                                <input name="message" class="form-control" placeholder="ваше сообщение" required>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-send-fill"></i> Отправить
+                        </button>
+                    </form>
+                    {% else %}
+                    <div class="alert" style="background-color: rgba(235, 66, 95, 0.1); border-color: #eb425f; color: #efeff1;">
+                        <i class="bi bi-exclamation-circle"></i> Для отправки сообщений необходимо добавить хотя бы один аккаунт
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
     </div>
+
+    <script>
+        // Tab switching
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Deactivate all buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            
+            // Activate clicked button
+            event.target.classList.add('active');
+        }
+
+        // Logs
+        const logContainer = document.getElementById('log-container');
+        async function fetchLogs() {
+            try {
+                const response = await fetch('/api/logs');
+                const data = await response.json();
+                const logs = data.logs;
+
+                if (logs.length === 0) {
+                    logContainer.innerHTML = '<div style="color: #7d7d82;">Нет логов</div>';
+                    return;
+                }
+
+                let html = '';
+                logs.slice(-50).forEach(log => {
+                    const levelClass = {
+                        'INFO': 'log-info',
+                        'WARNING': 'log-warning',
+                        'ERROR': 'log-error',
+                        'DEBUG': 'log-debug'
+                    }[log.level] || '';
+
+                    html += `<div class="log-entry ${levelClass}">[${log.level}] ${log.message}</div>`;
+                });
+
+                logContainer.innerHTML = html;
+                logContainer.scrollTop = logContainer.scrollHeight;
+            } catch (e) {
+                console.error('Ошибка загрузки логов:', e);
+            }
+        }
+
+        // Messages
+        const msgContainer = document.getElementById('msg-container');
+        async function fetchMessages() {
+            try {
+                const res = await fetch('/api/messages');
+                const data = await res.json();
+                const messages = data.messages;
+                
+                if (messages.length === 0) {
+                    msgContainer.innerHTML = '<div style="color: #7d7d82;">Нет сообщений</div>';
+                    return;
+                }
+                
+                let html = '';
+                messages.slice(-30).forEach(m => {
+                    const successIcon = m.success ? '✓' : '✗';
+                    const color = m.success ? '#31a24c' : '#eb425f';
+                    html += `<div class="log-entry" style="color: ${color};">${successIcon} <strong>${m.account}@${m.channel}:</strong> ${m.message}</div>`;
+                });
+                
+                msgContainer.innerHTML = html;
+                msgContainer.scrollTop = msgContainer.scrollHeight;
+            } catch(e) {
+                console.error('Ошибка загрузки сообщений', e);
+            }
+        }
+
+        setInterval(fetchLogs, 1000);
+        setInterval(fetchMessages, 2000);
+        
+        fetchLogs();
+        fetchMessages();
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

@@ -24,5 +24,6 @@ class APIKey(Base):
 
     id = Column(Integer, primary_key=True)
     key = Column(String)
-    provider = Column(String)  # openrouter/groq
+    provider = Column(String)  # groq/openrouter/gemini
+    model = Column(String, default="")
     usage_count = Column(Integer, default=0)
