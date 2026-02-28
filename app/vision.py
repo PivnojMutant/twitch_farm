@@ -20,14 +20,47 @@ current_context = "Стрим не запущен."
 
 async def capture_frame(url: str, retries: int = 3):
     """Захватывает один кадр из потока Twitch.
-    Если cv2 доступен, используется VideoCapture, иначе ffmpeg.
-    Повторяет попытку при разрывах потока.
+    Сначала пытаемся напрямую через ffmpeg, чтобы избежать предупреждений
+    о разрывности. Если это не сработает, используем Streamlink с
+    повторными попытками и опциями hls-live-restart.
     """
-    logger.debug(f"capture_frame: пытаемся получить потоки {url}")
+    logger.debug(f"capture_frame: пытаемся получить кадр из {url}")
+
+    # попробуем сначала ffmpeg (передаём URL как есть)
+    img_fd, img_path = tempfile.mkstemp(suffix=".jpg")
+    os.close(img_fd)
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        try:
+            # используем короткую команду для одного кадра, игнорируем ошибки
+            cmd = [
+                ffmpeg, "-y", "-nostdin", "-i", url,
+                "-frames:v", "1", "-q:v", "2", img_path,
+                "-loglevel", "error",
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+            if os.path.exists(img_path) and os.path.getsize(img_path) > 0:
+                logger.debug(f"capture_frame: кадр сохранён через ffmpeg в {img_path}")
+                return img_path
+            else:
+                logger.debug("capture_frame: ffmpeg не выдал кадр, пробуем Streamlink")
+        except Exception as e:
+            logger.debug(f"capture_frame: ffmpeg выдал исключение {e}, пробуем Streamlink")
+    else:
+        logger.debug("capture_frame: ffmpeg не найден, пропускаем этот шаг")
+
+    # если ffmpeg не помог, используем Streamlink
+    logger.debug("capture_frame: обращаемся к Streamlink")
     try:
         session = Streamlink()
         session.set_option("twitch-disable-ads", True)
         session.set_option("stream-timeout", 30)  # timeout 30 сек
+        session.set_option("hls-live-restart", True)  # перезапуск на символическом сегменте
         streams = session.streams(url)
     except Exception as e:
         logger.error(f"capture_frame: не удалось получить потоки: {e}")
@@ -56,6 +89,7 @@ async def capture_frame(url: str, retries: int = 3):
 
     for attempt in range(retries):
         try:
+            # всегда переоткрываем поток перед каждой попыткой
             with stream.open() as s, open(path, "wb") as f:
                 # читаем больше данных для стабильности (5MB вместо 1MB)
                 chunk = s.read(5 * 1024 * 1024)
