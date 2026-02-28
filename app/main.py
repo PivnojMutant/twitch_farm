@@ -3,12 +3,13 @@ import asyncio
 from fastapi import FastAPI, Request, Form
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-from app.models import Base, engine, SessionLocal, Account, APIKey
+from models import Base, engine, SessionLocal, Account, APIKey
 from sqlalchemy import select
-from app.bot_logic import launch_bots
-from app.vision import observer_loop
-from app.logger import setup_logging, log_buffer
+from bot_logic import launch_bots
+from vision import observer_loop
+from logger import setup_logging, log_buffer
 import logging
 from collections import deque
 
@@ -18,17 +19,15 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 app = FastAPI()
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory="templates")
+app.mount("/data", StaticFiles(directory="data"), name="data")
 
 STREAM_TASK = None
 BOT_TASK = None
-# выбранный провайдер на время сессии
 CURRENT_PROVIDER = "groq"
-# runtime flags
 SEND_CHAT = True
 CAPTURE_AUDIO = True
 CAPTURE_VIDEO = True
-# хранение истории сообщений в памяти (не для продакшена)
 MESSAGE_HISTORY = deque(maxlen=200)
 
 @app.on_event("startup")
@@ -45,54 +44,54 @@ async def index(request: Request):
         api_keys = key_res.scalars().all()
     return templates.TemplateResponse("index.html", {"request": request, "accounts": accounts, "api_keys": api_keys})
 
+# ЖЕЛЕЗОБЕТОННЫЙ ПЕРЕХВАТЧИК ФОРМЫ (без падений 422)
 @app.post("/start")
-async def start(
-    stream_url: str = Form(...),
-    channel: str = Form(...),
-    provider: str = Form("groq"),
-    # для чекбоксов устанавливаем default False: если поле отсутствует (неотмечено),
-    # FastAPI присвоит значение по умолчанию. Раньше здесь было True, поэтому
-    # при выключенном флажке значение оставалось True. Поэтому при попытке
-    # отключить аудио у вас в логах всё равно появлялось `capture_audio=True`.
-    send_chat: bool = Form(False),
-    capture_audio: bool = Form(False),
-    capture_video: bool = Form(False),
-):
+async def start(request: Request):
     global STREAM_TASK, BOT_TASK, CURRENT_PROVIDER
-    CURRENT_PROVIDER = provider
-
-    logger.info(
-        f"Запуск с URL: {stream_url}, канал: {channel}, провайдер: {provider}, "
-        f"send_chat={send_chat}, capture_audio={capture_audio}, capture_video={capture_video}"
-    )
-
-    # сохраняем флаги в глобальные переменные
     global SEND_CHAT, CAPTURE_AUDIO, CAPTURE_VIDEO
-    SEND_CHAT = send_chat
-    CAPTURE_AUDIO = capture_audio
-    CAPTURE_VIDEO = capture_video
+    
+    try:
+        form = await request.form()
+        stream_url = form.get("stream_url", "")
+        channel = form.get("channel", "")
+        provider = form.get("provider", "groq")
+        
+        is_send_chat = form.get("send_chat") is not None
+        is_cap_audio = form.get("capture_audio") is not None
+        is_cap_vid = form.get("capture_video") is not None
 
-    STREAM_TASK = asyncio.create_task(observer_loop(stream_url, provider, capture_audio, capture_video))  # flags passed as booleans
+        CURRENT_PROVIDER = provider
+        SEND_CHAT = is_send_chat
+        CAPTURE_AUDIO = is_cap_audio
+        CAPTURE_VIDEO = is_cap_vid
 
-    async with SessionLocal() as session:
-        result = await session.execute(
-            select(Account).where(Account.is_active == True)
-        )
-        accounts = result.scalars().all()
-        logger.info(f"Найдено аккаунтов: {len(accounts)}")
+        logger.info(f"⚙️ ПОПЫТКА ЗАПУСКА: Канал={channel}, Чат={is_send_chat}")
 
-    if accounts and send_chat:
-        BOT_TASK = asyncio.create_task(launch_bots(accounts, channel, provider, send_chat))
-    else:
-        logger.warning("Боты не будут запущены (либо нет аккаунтов, либо отправка чата отключена)")
+        if STREAM_TASK:
+            STREAM_TASK.cancel()
+        if BOT_TASK:
+            BOT_TASK.cancel()
 
+        STREAM_TASK = asyncio.create_task(observer_loop(stream_url, provider, is_cap_audio, is_cap_vid))
+
+        async with SessionLocal() as session:
+            result = await session.execute(select(Account))
+            all_accounts = result.scalars().all()
+            active_accounts = [acc for acc in all_accounts if acc.is_active]
+
+        if active_accounts and is_send_chat:
+            logger.info("✅ Передаю команду на запуск ботов...")
+            BOT_TASK = asyncio.create_task(launch_bots(active_accounts, channel, provider, is_send_chat))
+        else:
+            logger.warning(f"🔴 БОТЫ НЕ ЗАПУЩЕНЫ! Активных: {len(active_accounts)}, Галочка чата: {is_send_chat}")
+
+    except Exception as e:
+        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ ЗАПУСКЕ: {e}", exc_info=True)
+        
     return RedirectResponse("/", status_code=303)
 
 
 async def send_twitch_irc(account, channel: str, message: str):
-    """Простой отправщик через Twitch IRC (однократное соединение).
-    Использует oauth_token из account.oauth_token (формат oauth:...)
-    """
     import asyncio
     host = "irc.chat.twitch.tv"
     port = 6667
@@ -107,7 +106,6 @@ async def send_twitch_irc(account, channel: str, message: str):
         writer.write(f"JOIN {chan}\r\n".encode())
         await writer.drain()
 
-        # небольшая пауза чтобы сервер обработал JOIN
         await asyncio.sleep(1)
         writer.write(f"PRIVMSG {chan} :{message}\r\n".encode())
         await writer.drain()
@@ -132,7 +130,6 @@ async def send_message(account_id: int = Form(...), channel: str = Form(...), me
         async with SessionLocal() as session:
             acc = await session.get(Account, account_id)
             if not acc:
-                logger.warning(f"Попытка отправки от несуществующего аккаунта: {account_id}")
                 return RedirectResponse("/", status_code=303)
 
         ok = await send_twitch_irc(acc, channel, message)
@@ -154,6 +151,7 @@ async def stop():
         STREAM_TASK.cancel()
     if BOT_TASK:
         BOT_TASK.cancel()
+    logger.info("🛑 СИСТЕМА ОСТАНОВЛЕНА")
     return RedirectResponse("/", status_code=303)
 
 @app.post("/add-api-key")
@@ -166,7 +164,6 @@ async def add_api_key(key: str = Form(...), provider: str = Form(...), model: st
             logger.info(f"Добавлен API ключ для {provider}")
     except Exception as e:
         logger.error(f"Ошибка при добавлении API ключа: {e}")
-    
     return RedirectResponse("/", status_code=303)
 
 @app.post("/add-account")
@@ -178,10 +175,7 @@ async def add_account(
 ):
     try:
         async with SessionLocal() as session:
-            # Проверяем, не существует ли уже такой аккаунт
-            result = await session.execute(
-                select(Account).where(Account.username == username)
-            )
+            result = await session.execute(select(Account).where(Account.username == username))
             if result.scalars().first():
                 logger.warning(f"Аккаунт {username} уже существует")
                 return RedirectResponse("/", status_code=303)
@@ -198,7 +192,6 @@ async def add_account(
             logger.info(f"Добавлен аккаунт {username}")
     except Exception as e:
         logger.error(f"Ошибка при добавлении аккаунта: {e}")
-    
     return RedirectResponse("/", status_code=303)
 
 @app.get("/delete-account/{account_id}")
@@ -212,12 +205,10 @@ async def delete_account(account_id: int):
                 logger.info(f"Удален аккаунт {account.username}")
     except Exception as e:
         logger.error(f"Ошибка при удалении аккаунта: {e}")
-    
     return RedirectResponse("/", status_code=303)
 
 @app.get("/api/logs")
 async def get_logs():
-    """Возвращает последние логи в JSON формате"""
     return JSONResponse({"logs": log_buffer.get_logs()})
 
 @app.get("/delete-api-key/{key_id}")

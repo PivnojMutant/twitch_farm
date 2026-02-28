@@ -7,7 +7,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./app:/app/app
+      - ./app:/app  # Монтируем локальную папку app прямо в /app контейнера
       - ./data:/app/data
     env_file:
       - .env

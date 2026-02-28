@@ -1,6 +1,6 @@
 import os
 import asyncio
-from app.vision import capture_frame, analyze_media, current_context
+from vision import capture_frame, analyze_media, current_context
 
 async def main():
     url = input("Stream URL: https://www.twitch.tv/klawermalver123")

@@ -1,7 +1,8 @@
 import asyncio
 import httpx
 import logging
-from app.models import SessionLocal, APIKey
+import base64
+from models import SessionLocal, APIKey
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ async def get_next_key(provider: str):
         keys.sort(key=lambda k: k.usage_count)
         return keys[0]
 
-async def call_ai(prompt: str, provider: str = "groq", model: str | None = None, *, attempts: int = 3):
+async def call_ai(prompt: str | list, provider: str = "groq", model: str | None = None, *, attempts: int = 3):
     """Универсальная функция для вызова любого AI провайдера.
 
     Когда сервер возвращает 429 (rate limit), делает паузу и пробует еще раз
@@ -166,15 +167,31 @@ async def transcribe_audio_file(path: str, provider: str = "groq"):
 
 
 async def describe_image_file(path: str, provider: str = "groq"):
-    """Читает изображение и описывает его через выбранную модель пользователем.
-    Не встраиваем base64, просто отправляем промпт внутри контекста.
-    """
+    """Читает изображение, кодирует в Base64 и отправляет в Vision модель."""
     try:
-        # просто отправляем лаконичный промпт, не пытаясь встраивать файл
-        # Groq и OpenRouter могут работать с файлами отдельно или через API
-        prompt = "Опиши кратко, что происходит на картинке (аналитика видео-фрейма для контекста стрима)."
-        # используем модель, выбранную пользователем
-        return await call_ai(prompt, provider=provider)
+        # Читаем файл с диска и кодируем в base64
+        with open(path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        base64_image = f"data:image/jpeg;base64,{encoded_string}"
+
+        # Формируем правильный промпт по документации Groq / OpenRouter
+        vision_prompt = [
+            {
+                "type": "text",
+                "text": "Опиши ОЧЕНЬ КРАТКО (1-2 предложения), что происходит на картинке (что за игра, что за аниме, что за музыка, если ничего из этого спроси что происходит). Не пиши лишних вступлений."
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": base64_image
+                }
+            }
+        ]
+
+        # Отправляем этот сложный промпт в нашу универсальную функцию
+        return await call_ai(vision_prompt, provider=provider)
+        
     except Exception as e:
         logger.error(f"Ошибка описания изображения: {e}")
         return ""

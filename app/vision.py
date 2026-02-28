@@ -4,12 +4,7 @@ import tempfile
 import logging
 import shutil
 import os
-from app.ai_clients import call_ai, transcribe_audio_file, describe_image_file
-
-# интегрируем фильтр на уровне streamlink-logгера, чтобы ловить
-# предупреждения о «stream discontinuity», которые не выбрасываются как
-# исключения. когда фильтр поймает такое сообщение, он выставит
-# глобальную метку stream_broken.
+from ai_clients import call_ai, transcribe_audio_file, describe_image_file
 
 class _DiscontinuityFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -17,14 +12,11 @@ class _DiscontinuityFilter(logging.Filter):
         if "discontinuity" in msg:
             global stream_broken
             stream_broken = True
-            # сохраняем оригинальное сообщение, логгер всё равно его выведет
         return True
 
-# подключаем фильтр единожды
 _sl_logger = logging.getLogger("streamlink")
 _sl_logger.addFilter(_DiscontinuityFilter())
 
-# try to import cv2 but fall back if unavailable
 try:
     import cv2
     _has_cv2 = True
@@ -35,36 +27,19 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 current_context = "Стрим не запущен."
-# флаг, выставляется когда в потоке обнаружена разрывность (streamlink warning)
-# пока он True, мы не отправляем запросы в ИИ, даже если доступно аудио.
 stream_broken = False
 
 async def capture_frame(url: str, retries: int = 3):
-    """Захватывает один кадр из потока Twitch.
-
-    Путь к файлу возвращается, но важно понимать: временный файл создаётся
-    в контейнере (`/tmp`) и на хосте вы его не увидите, если не зайдёте внутрь
-    контейнера (`docker exec …`).
-
-    Для удобства при отладке можно установить переменную окружения
-    `DEBUG_FRAMES_DIR` — тогда кадры будут копироваться в указанную директорию
-    внутри рабочего дерева (например, `data/frames`).
-
-    Функция сначала пробует ffmpeg, затем — Streamlink (см. описание выше).
-    """
     logger.debug(f"capture_frame: пытаемся получить кадры из {url}")
-    # путь для хранения отладочных фреймов (если указана переменная)
     debug_dir = os.getenv("DEBUG_FRAMES_DIR")
     if debug_dir:
         os.makedirs(debug_dir, exist_ok=True)
 
-    # попробуем сначала ffmpeg (передаём URL как есть)
     img_fd, img_path = tempfile.mkstemp(suffix=".jpg")
     os.close(img_fd)
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
         try:
-            # используем короткую команду для одного кадра, игнорируем ошибки
             cmd = [
                 ffmpeg, "-y", "-nostdin", "-i", url,
                 "-frames:v", "1", "-q:v", "2", img_path,
@@ -79,7 +54,6 @@ async def capture_frame(url: str, retries: int = 3):
             if os.path.exists(img_path) and os.path.getsize(img_path) > 0:
                 logger.debug(f"capture_frame: кадр сохранён через ffmpeg в {img_path}")
                 if debug_dir:
-                    # копируем в отладочную директорию под уникальным именем
                     debug_path = os.path.join(debug_dir, os.path.basename(img_path))
                     shutil.copy(img_path, debug_path)
                     logger.debug(f"capture_frame: debug-копия кадра {debug_path}")
@@ -91,22 +65,21 @@ async def capture_frame(url: str, retries: int = 3):
     else:
         logger.debug("capture_frame: ffmpeg не найден, пропускаем этот шаг")
 
-    # если ffmpeg не помог, используем Streamlink
     logger.debug("capture_frame: обращаемся к Streamlink")
     try:
         session = Streamlink()
         session.set_option("twitch-disable-ads", True)
-        session.set_option("stream-timeout", 30)  # timeout 30 сек
-        session.set_option("hls-live-restart", True)  # перезапуск на символическом сегменте
+        session.set_option("stream-timeout", 30)
+        session.set_option("hls-live-restart", True)
         streams = session.streams(url)
     except Exception as e:
         logger.error(f"capture_frame: не удалось получить потоки: {e}")
         return None
+        
     if not streams:
         logger.warning(f"capture_frame: потоков не найдено для {url}")
         return None
     
-    # пробуем разные качества потока (best, 720p60, 720p, 480p и т.д.)
     quality_preferences = ["best", "720p60", "720p", "480p60", "480p", "360p", "worst"]
     stream = None
     for quality in quality_preferences:
@@ -114,65 +87,50 @@ async def capture_frame(url: str, retries: int = 3):
             stream = streams[quality]
             logger.debug(f"capture_frame: выбран поток качества {quality}")
             break
+            
     if not stream:
         stream = next(iter(streams.values()), None)
     if not stream:
         logger.warning(f"capture_frame: нет подходящего потока для {url}")
         return None
 
-    # сначала попробуем сохранить кусок файла с повторами
     fd, path = tempfile.mkstemp(suffix=".mp4")
     os.close(fd)
 
     for attempt in range(retries):
         try:
-            # всегда переоткрываем поток перед каждой попыткой
+            global stream_broken
+            stream_broken = False 
+            
             with stream.open() as s, open(path, "wb") as f:
-                # читаем больше данных для стабильности (5MB вместо 1MB)
-                chunk = s.read(5 * 1024 * 1024)
-                if not chunk or len(chunk) == 0:
-                    logger.warning(f"capture_frame: попытка {attempt + 1}: получен пустой chunk")
+                downloaded = 0
+                target_size = 1024 * 1024
+                
+                while downloaded < target_size:
+                    chunk = s.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                
+                logger.debug(f"capture_frame: прочитано {downloaded} байт")
+                
+                if downloaded < 100 * 1024:
+                    logger.warning(f"capture_frame: попытка {attempt + 1}: слишком мало данных ({downloaded} байт)")
+                    await asyncio.sleep(2)
                     continue
-                f.write(chunk)
-                logger.debug(f"capture_frame: прочитано {len(chunk)} байт")
+                
                 break
+                
         except Exception as e:
-            msg = str(e).lower()
-            if "discontinuity" in msg:
-                global stream_broken
-                stream_broken = True
-                logger.warning("capture_frame: исключение с дисконтиностью, приостановка ИИ до нового кадра")
-                return None
-            logger.warning(f"capture_frame: попытка {attempt + 1}/{retries} - ошибка при чтении потока: {e}")
+            logger.warning(f"capture_frame: попытка {attempt + 1}/{retries} - ошибка: {e}")
             if attempt < retries - 1:
-                await asyncio.sleep(2)  # ждем перед повторной попыткой
+                await asyncio.sleep(2)
             else:
-                logger.error(f"capture_frame: все {retries} попыток исчерпаны")
                 return None
 
-    # после успешного чтения можем скопировать кадр (если включено DEBUG_FRAMES_DIR)
-    if os.path.exists(img_path) and debug_dir and not stream_broken:
-        try:
-            debug_path = os.path.join(debug_dir, os.path.basename(img_path))
-            shutil.copy(img_path, debug_path)
-            logger.debug(f"capture_frame: debug-копия кадра {debug_path}")
-        except Exception as e:
-            logger.warning(f"capture_frame: не удалось сохранить debug-копию: {e}")
-
-    # здесь мы уже считали chunk и, возможно, stream_broken выставлен фильтром
-    if stream_broken:
-        # не возвращаем путь, чтобы верхний уровень тоже пропустил ИИ
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-        logger.warning("capture_frame: дисконтинуити выявлена через лог, кадр отброшен")
-        return None
-    img_path = path + ".jpg"
-
-    # проверяем что файл не пустой перед обработкой
-    if not os.path.exists(path) or os.path.getsize(path) == 0:
-        logger.error("capture_frame: файл потока пуст или не создан")
+    if not os.path.exists(path) or os.path.getsize(path) < 100 * 1024:
+        logger.error("capture_frame: файл потока пуст или поврежден")
         return None
 
     if _has_cv2:
@@ -182,105 +140,106 @@ async def capture_frame(url: str, retries: int = 3):
         if ret and frame is not None:
             cv2.imwrite(img_path, frame)
             logger.debug(f"capture_frame: кадр сохранён в {img_path} (cv2)")
+            
+            # Сохраняем копию кадра
+            os.makedirs("data", exist_ok=True)
+            shutil.copy(img_path, "data/debug_frame.jpg")
+            
             return img_path
         logger.warning(f"capture_frame: cv2 не смог прочитать кадр из {path}")
     
     # fallback: используем ffmpeg для извлечения кадра
-    ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         logger.error("capture_frame: ffmpeg не найден, невозможно извлечь кадр")
         return None
+        
     try:
-        # -y overwrite, -i input, -frames:v 1 один кадр, -q:v 2 качество
         proc = await asyncio.create_subprocess_exec(
-            ffmpeg, "-y", "-i", path,
+            ffmpeg, "-y",
+            "-i", path,
+            "-fflags", "+igndts",
+            "-copyts",
             "-frames:v", "1", "-q:v", "2", img_path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.wait()
+        
         if os.path.exists(img_path) and os.path.getsize(img_path) > 0:
             logger.debug(f"capture_frame: кадр сохранён в {img_path} (ffmpeg)")
+            
+            # Сохраняем копию кадра
+            os.makedirs("data", exist_ok=True)
+            shutil.copy(img_path, "data/debug_frame.jpg")
+            
             return img_path
         else:
             logger.warning(f"capture_frame: ffmpeg не создал изображение")
+            
     except Exception as e:
         logger.error(f"capture_frame: ffmpeg ошибка: {e}")
+        
     return None
 
 async def capture_audio(url: str, duration: int = 10):
-    """Записывает аудио поток из URL на duration секунд и возвращает путь к файлу.
-    Если файл размером 0 байт, возвращает None.
-    """
-    import os
     fd, path = tempfile.mkstemp(suffix=".mp3")
     os.close(fd)
 
-    # ffmpeg может читать поток Twitch напрямую
     cmd = [
         "ffmpeg", "-y", "-i", url,
         "-t", str(duration),
         "-q:a", "0", path
     ]
-    proc = await asyncio.create_subprocess_exec(*cmd,
-                                                stdout=asyncio.subprocess.DEVNULL,
-                                                stderr=asyncio.subprocess.DEVNULL)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL
+    )
     await proc.wait()
-    if os.path.exists(path) and os.path.getsize(path) > 100:  # пусть хотя бы 100 байт
+    if os.path.exists(path) and os.path.getsize(path) > 100:
         return path
-    # удаляем пустой файл
     try:
         os.remove(path)
     except Exception:
         pass
     return None
 
-
 async def analyze_media(img_path: str, audio_path: str, provider: str):
-    """Комбинирует описание изображения и транскрипт аудио и возвращает итоговый контекст/сообщение.
-    Обрезает слишком длинный контекст, чтобы избежать ошибок API.
-    """
     global current_context
     desc = ""
     text = ""
     if img_path:
         logger.debug(f"analyze_media: описываем изображение {img_path}")
         desc = await describe_image_file(img_path, provider)
-        logger.debug(f"analyze_media: описание картинки: {desc!r}")
     if audio_path:
         logger.debug(f"analyze_media: транскрибируем аудио {audio_path}")
         text = await transcribe_audio_file(audio_path, provider)
-        logger.debug(f"analyze_media: текст аудио: {text!r}")
 
-    # формируем дополнительный кусок контекста из новых данных
     extra = ""
     if desc:
         extra += f"Описание кадра: {desc}\n"
     if text:
         extra += f"Транскрипт аудио: {text}\n"
 
-    # создаём основной prompt, включая предыдущее состояние и новые сведения
     truncated_context = current_context
     if len(truncated_context) > 300:
         truncated_context = truncated_context[-300:]
 
+    # ИСПРАВЛЕННЫЙ ПРОМПТ
     if extra:
-        prompt = f"Контекст: {truncated_context}\n{extra}Напиши короткое сообщение в чат (макс 30 слов)."
+        prompt = f"Контекст: {truncated_context}\n{extra}ОПИШИ в 1 предложении, что сейчас происходит на экране (без приветствий)."
     else:
-        prompt = f"Контекст: {truncated_context}\nНапиши короткое сообщение в чат (макс 30 слов)."
+        prompt = f"Контекст: {truncated_context}\nОПИШИ в 1 предложении, что сейчас происходит на экране."
 
-    # лимит 1500 символов для максимальной совместимости
     if len(prompt) > 1500:
         prompt = prompt[-1500:]
-    logger.debug(f"analyze_media: отправляем prompt к AI: {prompt!r}")
+        
     result = await call_ai(prompt, provider=provider)
-    logger.debug(f"analyze_media: AI вернул {result!r}")
+    await asyncio.sleep(30)
 
-    # если модель отдала новый текст, обновляем глобальный текущий контекст
     if result:
         current_context = result
     return result
-
 
 async def observer_loop(url: str, provider: str = "groq", enable_audio: bool = True, enable_video: bool = True):
     global current_context
@@ -291,17 +250,13 @@ async def observer_loop(url: str, provider: str = "groq", enable_audio: bool = T
                 img = await capture_frame(url) if enable_video else None
                 audio = await capture_audio(url) if enable_audio else None
 
-                # если недавно была разрывность потока и мы всё ещё не получили
-                # новый кадр, не шлём запросы в ИИ вообще (чтобы не расходовать лимит)
                 global stream_broken
                 if stream_broken and enable_video:
                     if img:
-                        # наконец получен новый кадр, снимаем блокировку
                         stream_broken = False
                         logger.info("capture_frame: кадр восстановлен, продолжаем отправку в ИИ")
                     else:
                         logger.warning("Пропускаем вызов ИИ из-за предыдущей разрывности потока")
-                        # пропускаем остальные шаги и ждём следующего цикла
                         await asyncio.sleep(15)
                         continue
 
@@ -309,9 +264,8 @@ async def observer_loop(url: str, provider: str = "groq", enable_audio: bool = T
                     new_context = await analyze_media(img, audio, provider)
                     if new_context:
                         current_context = new_context
-                        logger.info(f"Контекст обновлен: {current_context[:50]}...")
+                        logger.info(f"Контекст обновлен: {current_context:}...")
                 else:
-                    # определяем, почему не получилось захватить данные
                     parts = []
                     if enable_video and not img:
                         parts.append("видео")

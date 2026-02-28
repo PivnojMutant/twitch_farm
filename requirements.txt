@@ -4,9 +4,9 @@ jinja2
 python-multipart
 sqlalchemy[asyncio]
 aiosqlite
-twitchio
-opencv-python
-streamlink
 httpx
 python-dotenv
 passlib[bcrypt]
+streamlink==6.6.2
+requests==2.31.0
+opencv-python-headless==4.9.0.80
