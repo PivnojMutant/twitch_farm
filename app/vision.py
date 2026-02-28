@@ -41,11 +41,22 @@ stream_broken = False
 
 async def capture_frame(url: str, retries: int = 3):
     """Захватывает один кадр из потока Twitch.
-    Сначала пытаемся напрямую через ffmpeg, чтобы избежать предупреждений
-    о разрывности. Если это не сработает, используем Streamlink с
-    повторными попытками и опциями hls-live-restart.
+
+    Путь к файлу возвращается, но важно понимать: временный файл создаётся
+    в контейнере (`/tmp`) и на хосте вы его не увидите, если не зайдёте внутрь
+    контейнера (`docker exec …`).
+
+    Для удобства при отладке можно установить переменную окружения
+    `DEBUG_FRAMES_DIR` — тогда кадры будут копироваться в указанную директорию
+    внутри рабочего дерева (например, `data/frames`).
+
+    Функция сначала пробует ffmpeg, затем — Streamlink (см. описание выше).
     """
-    logger.debug(f"capture_frame: пытаемся получить кадр из {url}")
+    logger.debug(f"capture_frame: пытаемся получить кадры из {url}")
+    # путь для хранения отладочных фреймов (если указана переменная)
+    debug_dir = os.getenv("DEBUG_FRAMES_DIR")
+    if debug_dir:
+        os.makedirs(debug_dir, exist_ok=True)
 
     # попробуем сначала ffmpeg (передаём URL как есть)
     img_fd, img_path = tempfile.mkstemp(suffix=".jpg")
@@ -67,6 +78,11 @@ async def capture_frame(url: str, retries: int = 3):
             await proc.wait()
             if os.path.exists(img_path) and os.path.getsize(img_path) > 0:
                 logger.debug(f"capture_frame: кадр сохранён через ffmpeg в {img_path}")
+                if debug_dir:
+                    # копируем в отладочную директорию под уникальным именем
+                    debug_path = os.path.join(debug_dir, os.path.basename(img_path))
+                    shutil.copy(img_path, debug_path)
+                    logger.debug(f"capture_frame: debug-копия кадра {debug_path}")
                 return img_path
             else:
                 logger.debug("capture_frame: ffmpeg не выдал кадр, пробуем Streamlink")
@@ -120,6 +136,14 @@ async def capture_frame(url: str, retries: int = 3):
                 f.write(chunk)
                 logger.debug(f"capture_frame: прочитано {len(chunk)} байт")
                 break
+    # после успешного чтения можем скопировать кадр (если включено DEBUG_FRAMES_DIR)
+    if os.path.exists(img_path) and debug_dir and not stream_broken:
+        try:
+            debug_path = os.path.join(debug_dir, os.path.basename(img_path))
+            shutil.copy(img_path, debug_path)
+            logger.debug(f"capture_frame: debug-копия кадра {debug_path}")
+        except Exception as e:
+            logger.warning(f"capture_frame: не удалось сохранить debug-копию: {e}")
         except Exception as e:
             msg = str(e).lower()
             if "discontinuity" in msg:
