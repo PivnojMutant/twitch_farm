@@ -1,4 +1,4 @@
-import streamlink
+from streamlink import Streamlink
 import asyncio
 import tempfile
 import logging
@@ -18,37 +18,67 @@ except Exception:
 logger = logging.getLogger(__name__)
 current_context = "Стрим не запущен."
 
-async def capture_frame(url: str):
+async def capture_frame(url: str, retries: int = 3):
     """Захватывает один кадр из потока Twitch.
     Если cv2 доступен, используется VideoCapture, иначе ffmpeg.
+    Повторяет попытку при разрывах потока.
     """
     logger.debug(f"capture_frame: пытаемся получить потоки {url}")
     try:
-        streams = streamlink.streams(url)
+        session = Streamlink()
+        session.set_option("twitch-disable-ads", True)
+        session.set_option("stream-timeout", 30)  # timeout 30 сек
+        streams = session.streams(url)
     except Exception as e:
         logger.error(f"capture_frame: не удалось получить потоки: {e}")
         return None
     if not streams:
         logger.warning(f"capture_frame: потоков не найдено для {url}")
         return None
-    stream = streams.get("best") or next(iter(streams.values()), None)
+    
+    # пробуем разные качества потока (best, 720p60, 720p, 480p и т.д.)
+    quality_preferences = ["best", "720p60", "720p", "480p60", "480p", "360p", "worst"]
+    stream = None
+    for quality in quality_preferences:
+        if quality in streams:
+            stream = streams[quality]
+            logger.debug(f"capture_frame: выбран поток качества {quality}")
+            break
+    if not stream:
+        stream = next(iter(streams.values()), None)
     if not stream:
         logger.warning(f"capture_frame: нет подходящего потока для {url}")
         return None
 
-    # сначала попробуем сохранить небольшой кусок файла
+    # сначала попробуем сохранить кусок файла с повторами
     fd, path = tempfile.mkstemp(suffix=".mp4")
     os.close(fd)
 
-    try:
-        with stream.open() as s, open(path, "wb") as f:
-            chunk = s.read(1024 * 1024)
-            f.write(chunk)
-    except Exception as e:
-        logger.error(f"capture_frame: ошибка при чтении потока: {e}")
-        return None
+    for attempt in range(retries):
+        try:
+            with stream.open() as s, open(path, "wb") as f:
+                # читаем больше данных для стабильности (5MB вместо 1MB)
+                chunk = s.read(5 * 1024 * 1024)
+                if not chunk or len(chunk) == 0:
+                    logger.warning(f"capture_frame: попытка {attempt + 1}: получен пустой chunk")
+                    continue
+                f.write(chunk)
+                logger.debug(f"capture_frame: прочитано {len(chunk)} байт")
+                break
+        except Exception as e:
+            logger.warning(f"capture_frame: попытка {attempt + 1}/{retries} - ошибка при чтении потока: {e}")
+            if attempt < retries - 1:
+                await asyncio.sleep(2)  # ждем перед повторной попыткой
+            else:
+                logger.error(f"capture_frame: все {retries} попыток исчерпаны")
+                return None
 
     img_path = path + ".jpg"
+
+    # проверяем что файл не пустой перед обработкой
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        logger.error("capture_frame: файл потока пуст или не создан")
+        return None
 
     if _has_cv2:
         cap = cv2.VideoCapture(path)
