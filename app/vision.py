@@ -17,6 +17,9 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 current_context = "Стрим не запущен."
+# флаг, выставляется когда в потоке обнаружена разрывность (streamlink warning)
+# пока он True, мы не отправляем запросы в ИИ, даже если доступно аудио.
+stream_broken = False
 
 async def capture_frame(url: str, retries: int = 3):
     """Захватывает один кадр из потока Twitch.
@@ -100,6 +103,15 @@ async def capture_frame(url: str, retries: int = 3):
                 logger.debug(f"capture_frame: прочитано {len(chunk)} байт")
                 break
         except Exception as e:
+            # если Streamlink сообщил о разрывности HLS-потока, то
+            # пометим глобальный флаг, чтобы остановить отправку запросов в ИИ
+            msg = str(e).lower()
+            if "discontinuity" in msg:
+                global stream_broken
+                stream_broken = True
+                logger.warning("capture_frame: обнаружена разрывность потока (stream discontinuity), приостановка ИИ до нового кадра")
+                # не делаем больше попыток, вернём None
+                return None
             logger.warning(f"capture_frame: попытка {attempt + 1}/{retries} - ошибка при чтении потока: {e}")
             if attempt < retries - 1:
                 await asyncio.sleep(2)  # ждем перед повторной попыткой
@@ -229,6 +241,21 @@ async def observer_loop(url: str, provider: str = "groq", enable_audio: bool = T
             try:
                 img = await capture_frame(url) if enable_video else None
                 audio = await capture_audio(url) if enable_audio else None
+
+                # если недавно была разрывность потока и мы всё ещё не получили
+                # новый кадр, не шлём запросы в ИИ вообще (чтобы не расходовать лимит)
+                global stream_broken
+                if stream_broken and enable_video:
+                    if img:
+                        # наконец получен новый кадр, снимаем блокировку
+                        stream_broken = False
+                        logger.info("capture_frame: кадр восстановлен, продолжаем отправку в ИИ")
+                    else:
+                        logger.warning("Пропускаем вызов ИИ из-за предыдущей разрывности потока")
+                        # пропускаем остальные шаги и ждём следующего цикла
+                        await asyncio.sleep(15)
+                        continue
+
                 if img or audio:
                     new_context = await analyze_media(img, audio, provider)
                     if new_context:
