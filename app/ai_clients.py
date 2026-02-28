@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 from app.models import SessionLocal, APIKey
@@ -28,8 +29,17 @@ async def get_next_key(provider: str):
         keys.sort(key=lambda k: k.usage_count)
         return keys[0]
 
-async def call_ai(prompt: str, provider: str = "groq", model: str | None = None):
-    """Универсальная функция для вызова любого AI провайдера"""
+async def call_ai(prompt: str, provider: str = "groq", model: str | None = None, *, attempts: int = 3):
+    """Универсальная функция для вызова любого AI провайдера.
+
+    Когда сервер возвращает 429 (rate limit), делает паузу и пробует еще раз
+    на другом ключе. Ограничение по количеству попыток предотвращает бесконечный
+    цикл; если исчерпаны, возвращается ошибка.
+    """
+    if attempts <= 0:
+        logger.error(f"{provider} rate limit: исчерпаны попытки ({prompt[:40]}...)")
+        return "Ошибка: превышен лимит запросов, попробуйте позже"
+
     key_obj = await get_next_key(provider)
     if not key_obj:
         logger.error(f"Нет доступных {provider} ключей")
@@ -65,14 +75,22 @@ async def call_ai(prompt: str, provider: str = "groq", model: str | None = None)
             )
         
         if r.status_code == 429:
-            logger.warning(f"{provider} rate limit, переключаемся на другой ключ")
+            # зафиксируем, что ключ исчерпан
+            logger.warning(f"{provider} rate limit ({r.headers.get('Retry-After')}) на ключе {key_obj.id}")
             key_obj.usage_count += 9999
             async with SessionLocal() as session:
                 db_key = await session.get(APIKey, key_obj.id)
                 if db_key:
                     db_key.usage_count += 9999
                     await session.commit()
-            return await call_ai(prompt, provider)
+            # перед повтором даём серверу "остыть" (учитываем Retry-After, если есть)
+            retry_after = 1
+            try:
+                retry_after = int(r.headers.get("Retry-After", retry_after))
+            except Exception:
+                pass
+            await asyncio.sleep(retry_after)
+            return await call_ai(prompt, provider, model, attempts=attempts-1)
         
         if r.status_code != 200:
             logger.error(f"{provider} API ошибка {r.status_code}: {r.text}")
