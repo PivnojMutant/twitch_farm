@@ -6,6 +6,24 @@ import shutil
 import os
 from app.ai_clients import call_ai, transcribe_audio_file, describe_image_file
 
+# интегрируем фильтр на уровне streamlink-logгера, чтобы ловить
+# предупреждения о «stream discontinuity», которые не выбрасываются как
+# исключения. когда фильтр поймает такое сообщение, он выставит
+# глобальную метку stream_broken.
+
+class _DiscontinuityFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage().lower()
+        if "discontinuity" in msg:
+            global stream_broken
+            stream_broken = True
+            # сохраняем оригинальное сообщение, логгер всё равно его выведет
+        return True
+
+# подключаем фильтр единожды
+_sl_logger = logging.getLogger("streamlink")
+_sl_logger.addFilter(_DiscontinuityFilter())
+
 # try to import cv2 but fall back if unavailable
 try:
     import cv2
@@ -103,14 +121,11 @@ async def capture_frame(url: str, retries: int = 3):
                 logger.debug(f"capture_frame: прочитано {len(chunk)} байт")
                 break
         except Exception as e:
-            # если Streamlink сообщил о разрывности HLS-потока, то
-            # пометим глобальный флаг, чтобы остановить отправку запросов в ИИ
             msg = str(e).lower()
             if "discontinuity" in msg:
                 global stream_broken
                 stream_broken = True
-                logger.warning("capture_frame: обнаружена разрывность потока (stream discontinuity), приостановка ИИ до нового кадра")
-                # не делаем больше попыток, вернём None
+                logger.warning("capture_frame: исключение с дисконтиностью, приостановка ИИ до нового кадра")
                 return None
             logger.warning(f"capture_frame: попытка {attempt + 1}/{retries} - ошибка при чтении потока: {e}")
             if attempt < retries - 1:
@@ -119,6 +134,15 @@ async def capture_frame(url: str, retries: int = 3):
                 logger.error(f"capture_frame: все {retries} попыток исчерпаны")
                 return None
 
+    # здесь мы уже считали chunk и, возможно, stream_broken выставлен фильтром
+    if stream_broken:
+        # не возвращаем путь, чтобы верхний уровень тоже пропустил ИИ
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        logger.warning("capture_frame: дисконтинуити выявлена через лог, кадр отброшен")
+        return None
     img_path = path + ".jpg"
 
     # проверяем что файл не пустой перед обработкой
