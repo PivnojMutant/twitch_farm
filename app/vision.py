@@ -235,7 +235,16 @@ async def observer_loop(url: str, provider: str = "groq", enable_audio: bool = T
                         current_context = new_context
                         logger.info(f"Контекст обновлен: {current_context[:50]}...")
                 else:
-                    logger.warning("Не удалось захватить ни кадр, ни аудио (возможно они отключены)")
+                    # определяем, почему не получилось захватить данные
+                    parts = []
+                    if enable_video and not img:
+                        parts.append("видео")
+                    if enable_audio and not audio:
+                        parts.append("аудио")
+                    if not parts:
+                        logger.warning("Оба захвата отключены, наблюдение простаивает")
+                    else:
+                        logger.warning("Не удалось захватить: %s" % ", ".join(parts))
             except Exception as e:
                 current_context = f"Ошибка наблюдателя: {e}"
                 logger.error(f"Ошибка в observer_loop: {e}", exc_info=True)

@@ -50,14 +50,21 @@ async def start(
     stream_url: str = Form(...),
     channel: str = Form(...),
     provider: str = Form("groq"),
+    # для чекбоксов устанавливаем default False: если поле отсутствует (неотмечено),
+    # FastAPI присвоит значение по умолчанию. Раньше здесь было True, поэтому
+    # при выключенном флажке значение оставалось True. Поэтому при попытке
+    # отключить аудио у вас в логах всё равно появлялось `capture_audio=True`.
     send_chat: bool = Form(False),
-    capture_audio: bool = Form(True),
-    capture_video: bool = Form(True),
+    capture_audio: bool = Form(False),
+    capture_video: bool = Form(False),
 ):
     global STREAM_TASK, BOT_TASK, CURRENT_PROVIDER
     CURRENT_PROVIDER = provider
 
-    logger.info(f"Запуск с URL: {stream_url}, канал: {channel}, провайдер: {provider}, send_chat={send_chat}, capture_audio={capture_audio}, capture_video={capture_video}")
+    logger.info(
+        f"Запуск с URL: {stream_url}, канал: {channel}, провайдер: {provider}, "
+        f"send_chat={send_chat}, capture_audio={capture_audio}, capture_video={capture_video}"
+    )
 
     # сохраняем флаги в глобальные переменные
     global SEND_CHAT, CAPTURE_AUDIO, CAPTURE_VIDEO
